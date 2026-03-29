@@ -117,10 +117,27 @@ namespace ACViewer.View
             var isModel = fileType == 0x1 || fileType == 0x2;
             var isImage = fileType == 0x5 || fileType == 0x6 || fileType == 08;
             var isSound = fileType == 0xA;
+            var isEnvironment = fileType == 0x0D;
+            var isEnvCell = (selectedFileID & 0xFFFF) >= 0x100 && (selectedFileID & 0xFFFF) < 0xFFFE && !isModel && !isImage && !isSound && !isEnvironment;
 
-            if (isModel)
+            if (isEnvCell)
             {
-                saveFileDialog.Filter = "OBJ files (*.obj)|*.obj|FBX files (*.fbx)|*.fbx|DAE files (*.dae)|*.dae|RAW files (*.raw)|*.raw";
+                var landblockID = selectedFileID & 0xFFFF0000;
+                saveFileDialog.Filter = "Full Dungeon X (*.x)|*.x|Single Cell X (*.x)|*.x|RAW files (*.raw)|*.raw";
+                saveFileDialog.FileName = $"Dungeon_{landblockID >> 16:X4}.x";
+            }
+            else if (isEnvironment)
+            {
+                saveFileDialog.Filter = "VWorlds X files (*.x)|*.x|RAW files (*.raw)|*.raw";
+                saveFileDialog.FileName = $"{selectedFileID:X8}.x";
+            }
+            else if (isModel)
+            {
+                var isSetup = fileType == 0x2;
+                if (isSetup)
+                    saveFileDialog.Filter = "OBJ files (*.obj)|*.obj|FBX files (*.fbx)|*.fbx|DAE files (*.dae)|*.dae|VWorlds X files (*.x)|*.x|VWorlds Static Model (*.x)|*.x|VWorlds Actor Bones (*.x)|*.x|RAW files (*.raw)|*.raw";
+                else
+                    saveFileDialog.Filter = "OBJ files (*.obj)|*.obj|FBX files (*.fbx)|*.fbx|DAE files (*.dae)|*.dae|VWorlds X files (*.x)|*.x|RAW files (*.raw)|*.raw";
                 saveFileDialog.FileName = $"{selectedFileID:X8}.obj";
             }
             else if (isImage)
@@ -155,9 +172,21 @@ namespace ACViewer.View
 
             var saveFilename = saveFileDialog.FileName;
 
-            if (isModel && saveFileDialog.FilterIndex == 1)
+            if (isEnvCell && saveFileDialog.FilterIndex == 1)
+                FileExport.ExportDungeon_X(selectedFileID, saveFilename);
+            else if (isEnvCell && saveFileDialog.FilterIndex == 2)
+                FileExport.ExportEnvCell_X(selectedFileID, saveFilename);
+            else if (isEnvironment && saveFileDialog.FilterIndex == 1)
+                FileExport.ExportEnvironment_X(selectedFileID, saveFilename);
+            else if (isModel && saveFileDialog.FilterIndex == 1)
                 FileExport.ExportModel(selectedFileID, saveFilename);
-            else if (isModel && saveFileDialog.FilterIndex > 1)
+            else if (isModel && saveFileDialog.FilterIndex == 5 && fileType == 0x2)
+                FileExport.ExportActorStatic_X(selectedFileID, saveFilename);
+            else if (isModel && saveFileDialog.FilterIndex == 6 && fileType == 0x2)
+                FileExport.ExportActor_X(selectedFileID, saveFilename);
+            else if (isModel && saveFileDialog.FilterIndex == 4 && saveFilename.EndsWith(".x"))
+                FileExport.ExportGfxObjOrSetup_X(selectedFileID, saveFilename);
+            else if (isModel && saveFileDialog.FilterIndex > 1 && saveFileDialog.FilterIndex < 4)
             {
                 // try to get animation id, if applicable
                 var rawState = ModelViewer.Instance?.ViewObject?.PhysicsObj?.MovementManager?.MotionInterpreter?.RawState;
@@ -182,8 +211,56 @@ namespace ACViewer.View
                 FileExport.ExportImage(selectedFileID, saveFilename);
             else if (isSound && saveFileDialog.FilterIndex == 1)
                 FileExport.ExportSound(selectedFileID, saveFilename);
+            else if (isEnvCell || isEnvironment)
+                FileExport.ExportRaw(DatType.Cell, selectedFileID, saveFilename);
             else
                 FileExport.ExportRaw(DatType.Portal, selectedFileID, saveFilename);
+        }
+
+        private void ExportDungeon_Click(object sender, RoutedEventArgs e)
+        {
+            // Export the dungeon currently loaded in the World Viewer
+            var worldViewer = WorldViewer.Instance;
+            if (worldViewer == null || !worldViewer.DungeonMode)
+            {
+                MainWindow.Instance.AddStatusText("No dungeon loaded. Navigate to a dungeon landblock in the World Viewer first (e.g. teleport to a dungeon).");
+                return;
+            }
+
+            var landblockID = worldViewer.SingleBlock & 0xFFFF0000;
+
+            // Verify it actually has EnvCells
+            var landblockInfoID = landblockID | 0xFFFE;
+            ACE.DatLoader.FileTypes.LandblockInfo landblockInfo = null;
+            try
+            {
+                landblockInfo = DatManager.CellDat.ReadFromDat<ACE.DatLoader.FileTypes.LandblockInfo>(landblockInfoID);
+            }
+            catch { }
+
+            if (landblockInfo == null || landblockInfo.NumCells == 0)
+            {
+                MainWindow.Instance.AddStatusText($"Landblock {landblockID >> 16:X4} has no EnvCells.");
+                return;
+            }
+
+            // Use folder browser - default to VWorlds Local Content\Worlds
+            var worldName = $"Dungeon_{landblockID >> 16:X4}";
+            var defaultRoot = @"F:\VWorlds\Microsoft Virtual Worlds\Local Content\Worlds";
+
+            var folderDialog = new System.Windows.Forms.FolderBrowserDialog();
+            folderDialog.Description = $"Select root Worlds folder to export \"{worldName}\"";
+            folderDialog.SelectedPath = System.IO.Directory.Exists(defaultRoot) ? defaultRoot : "";
+            folderDialog.ShowNewFolderButton = true;
+
+            if (folderDialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+
+            var outDir = Path.Combine(folderDialog.SelectedPath, worldName);
+            System.IO.Directory.CreateDirectory(outDir);
+
+            MainWindow.Instance.AddStatusText($"Exporting dungeon {landblockID >> 16:X4} ({landblockInfo.NumCells} cells) to {outDir}...");
+
+            FileExport.ExportDungeon_X(landblockID | 0x100, Path.Combine(outDir, $"{worldName}.x"));
         }
 
         public static void ReadDATFile(string filename)

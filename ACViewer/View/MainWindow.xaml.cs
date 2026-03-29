@@ -32,7 +32,20 @@ namespace ACViewer.View
         {
             ConfigManager.LoadConfig();
 
-            if (Config.AutomaticallyLoadDATsOnStartup)
+            // Auto-detect AC folder if not configured
+            if (string.IsNullOrEmpty(Config.ACFolder))
+            {
+                var defaultPath = @"F:\Turbine\Asheron's Call";
+                if (System.IO.Directory.Exists(defaultPath) &&
+                    System.IO.File.Exists(System.IO.Path.Combine(defaultPath, "client_portal.dat")))
+                {
+                    Config.ACFolder = defaultPath;
+                    Config.AutomaticallyLoadDATsOnStartup = true;
+                    ConfigManager.SaveConfig();
+                }
+            }
+
+            if (Config.AutomaticallyLoadDATsOnStartup && !string.IsNullOrEmpty(Config.ACFolder))
             {
                 MainMenu.Instance.LoadDATs(Config.ACFolder);
             }
